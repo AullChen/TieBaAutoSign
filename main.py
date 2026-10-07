@@ -1,232 +1,287 @@
 # -*- coding:utf-8 -*-
-import os
-import requests
-import hashlib
-import time
 import copy
+import hashlib
 import logging
+import os
 import random
-
 import smtplib
+import time
 from email.mime.text import MIMEText
 
+import requests
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+ENV = os.environ
+
+
+class RedactingFormatter(logging.Formatter):
+    def format(self, record):
+        message = super().format(record)
+        secrets = []
+
+        bduss = ENV.get("BDUSS", "")
+        if bduss:
+            secrets.extend(value for value in bduss.split("#") if value)
+
+        for key in ("AUTH", "FROM", "TO"):
+            value = ENV.get(key)
+            if value:
+                secrets.append(value)
+
+        for secret in secrets:
+            message = message.replace(secret, "***")
+
+        return message
+
+
+LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+formatter = RedactingFormatter(LOG_FORMAT)
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+logger.propagate = False
 
-# API_URL
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+failure_handler = logging.FileHandler("run.log", mode="a", encoding="utf-8")
+failure_handler.setLevel(logging.ERROR)
+failure_handler.setFormatter(formatter)
+logger.addHandler(failure_handler)
+
+
 LIKIE_URL = "http://c.tieba.baidu.com/c/f/forum/like"
 TBS_URL = "http://tieba.baidu.com/dc/common/tbs"
 SIGN_URL = "http://c.tieba.baidu.com/c/c/forum/sign"
 
-ENV = os.environ
-
 HEADERS = {
-    'Host': 'tieba.baidu.com',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.71 Safari/537.36',
+    "Host": "tieba.baidu.com",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 6.1; WOW64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/39.0.2171.71 Safari/537.36"
+    ),
 }
 SIGN_DATA = {
-    '_client_type': '2',
-    '_client_version': '9.7.8.0',
-    '_phone_imei': '000000000000000',
-    'model': 'MI+5',
+    "_client_type": "2",
+    "_client_version": "9.7.8.0",
+    "_phone_imei": "000000000000000",
+    "model": "MI+5",
     "net_type": "1",
 }
 
-# VARIABLE NAME
 COOKIE = "Cookie"
 BDUSS = "BDUSS"
-EQUAL = r'='
-EMPTY_STR = r''
-TBS = 'tbs'
-PAGE_NO = 'page_no'
-ONE = '1'
+EQUAL = r"="
+EMPTY_STR = r""
+TBS = "tbs"
 TIMESTAMP = "timestamp"
-DATA = 'data'
-FID = 'fid'
-SIGN_KEY = 'tiebaclient!!!'
+FID = "fid"
+SIGN_KEY = "tiebaclient!!!"
 UTF8 = "utf-8"
 SIGN = "sign"
 KW = "kw"
 
-s = requests.Session()
+session = requests.Session()
 
 
 def get_tbs(bduss):
-    logger.info("获取tbs开始")
+    logger.info("获取 tbs 开始")
     headers = copy.copy(HEADERS)
     headers.update({COOKIE: EMPTY_STR.join([BDUSS, EQUAL, bduss])})
+
     try:
-        tbs = s.get(url=TBS_URL, headers=headers, timeout=5).json()[TBS]
-    except Exception as e:
-        logger.error("获取tbs出错" + e)
-        logger.info("重新获取tbs开始")
-        tbs = s.get(url=TBS_URL, headers=headers, timeout=5).json()[TBS]
-    logger.info("获取tbs结束")
+        tbs = session.get(url=TBS_URL, headers=headers, timeout=5).json()[TBS]
+    except Exception as exc:
+        logger.warning("首次获取 tbs 失败，准备重试：%s", type(exc).__name__)
+        try:
+            tbs = session.get(url=TBS_URL, headers=headers, timeout=5).json()[TBS]
+        except Exception as retry_exc:
+            raise RuntimeError("获取 tbs 失败") from retry_exc
+
+    logger.info("获取 tbs 结束")
     return tbs
 
 
 def get_favorite(bduss):
     logger.info("获取关注的贴吧开始")
-    # 客户端关注的贴吧
-    returnData = {}
-    i = 1
+    return_data = {}
+    page = 1
     data = {
-        'BDUSS': bduss,
-        '_client_type': '2',
-        '_client_id': 'wappc_1534235498291_488',
-        '_client_version': '9.7.8.0',
-        '_phone_imei': '000000000000000',
-        'from': '1008621y',
-        'page_no': '1',
-        'page_size': '200',
-        'model': 'MI+5',
-        'net_type': '1',
-        'timestamp': str(int(time.time())),
-        'vcode_tag': '11',
+        "BDUSS": bduss,
+        "_client_type": "2",
+        "_client_id": "wappc_1534235498291_488",
+        "_client_version": "9.7.8.0",
+        "_phone_imei": "000000000000000",
+        "from": "1008621y",
+        "page_no": "1",
+        "page_size": "200",
+        "model": "MI+5",
+        "net_type": "1",
+        "timestamp": str(int(time.time())),
+        "vcode_tag": "11",
     }
-    data = encodeData(data)
+    data = encode_data(data)
+
     try:
-        res = s.post(url=LIKIE_URL, data=data, timeout=5).json()
-    except Exception as e:
-        logger.error("获取关注的贴吧出错" + e)
-        return []
-    returnData = res
-    if 'forum_list' not in returnData:
-        returnData['forum_list'] = []
-    if res['forum_list'] == []:
-        return {'gconforum': [], 'non-gconforum': []}
-    if 'non-gconforum' not in returnData['forum_list']:
-        returnData['forum_list']['non-gconforum'] = []
-    if 'gconforum' not in returnData['forum_list']:
-        returnData['forum_list']['gconforum'] = []
-    while 'has_more' in res and res['has_more'] == '1':
-        i = i + 1
+        res = session.post(url=LIKIE_URL, data=data, timeout=5).json()
+    except Exception as exc:
+        raise RuntimeError("获取关注贴吧失败") from exc
+
+    return_data = res
+    if "forum_list" not in return_data:
+        return_data["forum_list"] = []
+    if res["forum_list"] == []:
+        return {"gconforum": [], "non-gconforum": []}
+    if "non-gconforum" not in return_data["forum_list"]:
+        return_data["forum_list"]["non-gconforum"] = []
+    if "gconforum" not in return_data["forum_list"]:
+        return_data["forum_list"]["gconforum"] = []
+
+    while "has_more" in res and res["has_more"] == "1":
+        page += 1
         data = {
-            'BDUSS': bduss,
-            '_client_type': '2',
-            '_client_id': 'wappc_1534235498291_488',
-            '_client_version': '9.7.8.0',
-            '_phone_imei': '000000000000000',
-            'from': '1008621y',
-            'page_no': str(i),
-            'page_size': '200',
-            'model': 'MI+5',
-            'net_type': '1',
-            'timestamp': str(int(time.time())),
-            'vcode_tag': '11',
+            "BDUSS": bduss,
+            "_client_type": "2",
+            "_client_id": "wappc_1534235498291_488",
+            "_client_version": "9.7.8.0",
+            "_phone_imei": "000000000000000",
+            "from": "1008621y",
+            "page_no": str(page),
+            "page_size": "200",
+            "model": "MI+5",
+            "net_type": "1",
+            "timestamp": str(int(time.time())),
+            "vcode_tag": "11",
         }
-        data = encodeData(data)
+        data = encode_data(data)
+
         try:
-            res = s.post(url=LIKIE_URL, data=data, timeout=5).json()
-        except Exception as e:
-            logger.error("获取关注的贴吧出错" + e)
-            continue
-        if 'forum_list' not in res:
-            continue
-        if 'non-gconforum' in res['forum_list']:
-            returnData['forum_list']['non-gconforum'].append(res['forum_list']['non-gconforum'])
-        if 'gconforum' in res['forum_list']:
-            returnData['forum_list']['gconforum'].append(res['forum_list']['gconforum'])
+            res = session.post(url=LIKIE_URL, data=data, timeout=5).json()
+        except Exception as exc:
+            raise RuntimeError(f"获取关注贴吧第 {page} 页失败") from exc
 
-    t = []
-    for i in returnData['forum_list']['non-gconforum']:
-        if isinstance(i, list):
-            for j in i:
-                if isinstance(j, list):
-                    for k in j:
-                        t.append(k)
-                else:
-                    t.append(j)
-        else:
-            t.append(i)
-    for i in returnData['forum_list']['gconforum']:
-        if isinstance(i, list):
-            for j in i:
-                if isinstance(j, list):
-                    for k in j:
-                        t.append(k)
-                else:
-                    t.append(j)
-        else:
-            t.append(i)
+        if "forum_list" not in res:
+            continue
+        if "non-gconforum" in res["forum_list"]:
+            return_data["forum_list"]["non-gconforum"].append(
+                res["forum_list"]["non-gconforum"]
+            )
+        if "gconforum" in res["forum_list"]:
+            return_data["forum_list"]["gconforum"].append(
+                res["forum_list"]["gconforum"]
+            )
+
+    favorites = []
+    for group_name in ("non-gconforum", "gconforum"):
+        for item in return_data["forum_list"][group_name]:
+            if isinstance(item, list):
+                for nested in item:
+                    if isinstance(nested, list):
+                        favorites.extend(nested)
+                    else:
+                        favorites.append(nested)
+            else:
+                favorites.append(item)
+
     logger.info("获取关注的贴吧结束")
-    return t
+    return favorites
 
 
-def encodeData(data):
-    s = EMPTY_STR
-    keys = data.keys()
-    for i in sorted(keys):
-        s += i + EQUAL + str(data[i])
-    sign = hashlib.md5((s + SIGN_KEY).encode(UTF8)).hexdigest().upper()
+def encode_data(data):
+    raw = EMPTY_STR
+    for key in sorted(data.keys()):
+        raw += key + EQUAL + str(data[key])
+    sign = hashlib.md5((raw + SIGN_KEY).encode(UTF8)).hexdigest().upper()
     data.update({SIGN: str(sign)})
     return data
 
 
 def client_sign(bduss, tbs, fid, kw):
-    # 客户端签到
-    logger.info("开始签到贴吧：" + kw)
+    logger.info("开始签到贴吧：%s", kw)
     data = copy.copy(SIGN_DATA)
-    data.update({BDUSS: bduss, FID: fid, KW: kw, TBS: tbs, TIMESTAMP: str(int(time.time()))})
-    data = encodeData(data)
-    res = s.post(url=SIGN_URL, data=data, timeout=5).json()
-    return res
+    data.update(
+        {
+            BDUSS: bduss,
+            FID: fid,
+            KW: kw,
+            TBS: tbs,
+            TIMESTAMP: str(int(time.time())),
+        }
+    )
+    data = encode_data(data)
+    return session.post(url=SIGN_URL, data=data, timeout=5).json()
+
 
 def send_email(sign_list):
-    if ('HOST' not in ENV or 'FROM' not in ENV or 'TO' not in ENV or 'AUTH' not in ENV):
+    if not all(key in ENV for key in ("HOST", "FROM", "TO", "AUTH")):
         logger.error("未配置邮箱")
         return
-    HOST = ENV['HOST']
-    FROM = ENV['FROM']
-    TO = ENV['TO'].split('#')
-    AUTH = ENV['AUTH']
-    length = len(sign_list)
-    subject = f"{time.strftime('%Y-%m-%d', time.localtime())} 签到{length}个贴吧"
+
+    host = ENV["HOST"]
+    from_addr = ENV["FROM"]
+    to_addrs = ENV["TO"].split("#")
+    auth = ENV["AUTH"]
+
+    subject = f"{time.strftime('%Y-%m-%d', time.localtime())} 签到{len(sign_list)}个贴吧"
     body = """
     <style>
     .child {
       background-color: rgba(173, 216, 230, 0.19);
       padding: 10px;
     }
-
-    .child * {
-      margin: 5px;
-    }
+    .child * { margin: 5px; }
     </style>
     """
-    for i in sign_list:
+
+    for item in sign_list:
         body += f"""
         <div class="child">
-            <div class="name"> 贴吧名称: { i['name'] }</div>
-            <div class="slogan"> 贴吧简介: { i['slogan'] }</div>
+            <div class="name">贴吧名称: {item['name']}</div>
+            <div class="slogan">贴吧简介: {item['slogan']}</div>
         </div>
         <hr>
         """
-    msg = MIMEText(body, 'html', 'utf-8')
-    msg['subject'] = subject
+
+    msg = MIMEText(body, "html", "utf-8")
+    msg["subject"] = subject
+
     smtp = smtplib.SMTP()
-    smtp.connect(HOST)
-    smtp.login(FROM, AUTH)
-    smtp.sendmail(FROM, TO, msg.as_string())
+    smtp.connect(host)
+    smtp.login(from_addr, auth)
+    smtp.sendmail(from_addr, to_addrs, msg.as_string())
     smtp.quit()
 
+
 def main():
-    if ('BDUSS' not in ENV):
-        logger.error("未配置BDUSS")
-        return
-    b = ENV['BDUSS'].split('#')
-    for n, i in enumerate(b):
-        logger.info("开始签到第" + str(n) + "个用户" + i)
-        tbs = get_tbs(i)
-        favorites = get_favorite(i)
-        for j in favorites:
-            time.sleep(random.randint(1,5))
-            client_sign(i, tbs, j["id"], j["name"])
-        logger.info("完成第" + str(n) + "个用户签到")
-    # send_email(favorites)
+    bduss_raw = ENV.get("BDUSS", "").strip()
+    if not bduss_raw:
+        raise RuntimeError("未配置 BDUSS")
+
+    accounts = [value for value in bduss_raw.split("#") if value]
+    if not accounts:
+        raise RuntimeError("BDUSS 配置为空")
+
+    for index, bduss in enumerate(accounts, start=1):
+        logger.info("开始签到第 %d 个用户", index)
+        tbs = get_tbs(bduss)
+        favorites = get_favorite(bduss)
+
+        for forum in favorites:
+            time.sleep(random.randint(1, 5))
+            client_sign(bduss, tbs, forum["id"], forum["name"])
+
+        logger.info("完成第 %d 个用户签到，共处理 %d 个贴吧", index, len(favorites))
+
     logger.info("所有用户签到结束")
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        logger.exception("签到任务异常退出")
+        raise
