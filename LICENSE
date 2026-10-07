@@ -1,0 +1,34 @@
+Licensing Notice
+
+Copyright (c) 2026 AullChen
+
+Original contributions and modifications authored by AullChen in this repository,
+to the extent they are not derived from or otherwise subject to third-party rights,
+are licensed under the MIT License below.
+
+This repository also contains code derived from the project gwtak/TieBaSign.
+At the time this notice was added, that upstream repository did not include a
+license declaration. Nothing in this file grants rights to third-party material
+beyond the rights granted by its respective copyright holders. See NOTICE for
+source attribution.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the portions covered by this license and associated documentation files
+(the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom
+the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice, this licensing notice, and this permission notice
+shall be included in all copies or substantial portions of the Software covered
+by this license.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
